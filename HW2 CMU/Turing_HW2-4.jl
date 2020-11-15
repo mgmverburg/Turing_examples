@@ -85,6 +85,10 @@ plot(chns1)
 # this doesn't work, so we do need brackets
 # prob"happy=1.0 | chain = chns1, model = final_model, creative=1.0, smart=1.0, party=1.0, project=1.0, mac=1.0, hw=1.0, success=1.0"
 
+# ╔═╡ b875bf6c-2750-11eb-33ac-411faf3424bc
+# What is the probability of being happy given that you are smart and creative, value should be ~0.58132
+prob"happy=[true] | chain = chns1, model = final_model, creative = [true], smart = [true], party = nothing, project = nothing, mac = nothing, hw = nothing, success = nothing"
+
 # ╔═╡ 7224eda4-24bd-11eb-1b78-9f7767e10ce5
 # this works, and returns a value around 0.38
 prob"happy=[1.0] | chain = chns1, model = final_model, creative=[1.0], smart=[1.0], party=[1.0], project=[1.0], mac=[1.0], hw=[1.0], success=[1.0]"
@@ -127,6 +131,7 @@ chns1[Symbol("mac_coefficients[1]")]
 # ╠═5fab8164-24bc-11eb-3c1e-55ca18586634
 # ╠═9c26bdcc-24bc-11eb-1ce9-014839c7dbc5
 # ╠═f1816d2e-24e2-11eb-3840-fdc78fb0790f
+# ╠═b875bf6c-2750-11eb-33ac-411faf3424bc
 # ╠═7224eda4-24bd-11eb-1b78-9f7767e10ce5
 # ╠═19c1ac62-24e3-11eb-2342-4fbd07281041
 # ╠═2a2ab542-24e3-11eb-26a3-d357d783fd16
