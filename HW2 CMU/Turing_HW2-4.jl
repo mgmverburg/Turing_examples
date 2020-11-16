@@ -44,30 +44,44 @@ end
 	party ~ filldist(Bernoulli(party_b), n)
     smart ~ filldist(Bernoulli(smart_b), n)
     creative ~ filldist(Bernoulli(creative_b), n)
-	hw_coefficients ~ Dirichlet(2, 2)
-	mac_coefficients ~ Dirichlet(2, 2)
-	project_coefficients ~ Dirichlet(2, 2)
-	success_coefficients ~ Dirichlet(2, 2)
-	happy_coefficients ~ Dirichlet(3, 2)
-    hw ~ MvNormal(hw_coefficients[1]*party + hw_coefficients[2]*smart, 1.0)
-    mac ~ MvNormal(mac_coefficients[1]*creative + mac_coefficients[2]*smart, 1.0)
-    project ~ MvNormal(project_coefficients[1]*creative + project_coefficients[2]*smart, 1.0)
-    success ~ MvNormal(success_coefficients[1]*project + success_coefficients[2]*hw, 1.0)
 	
-	happy ~ MvNormal(happy_coefficients[1].*success .+ happy_coefficients[2].*mac .+ happy_coefficients[3].*party, 1.0)
-	# for i = 1:n
-	# 	happy[i] ~ Normal(happy_coefficients[1]*success[i] + happy_coefficients[2]*mac[i] + happy_coefficients[3]*party[i], 1.0)
-	# end
+	hw_coeff ~ filldist(Beta(2, 2), 4)
+	mac_coeff ~ filldist(Beta(2, 2), 4)
+	project_coeff ~ filldist(Beta(2, 2), 4)
+	success_coeff ~ filldist(Beta(2, 2), 4)
+	happy_coeff ~ filldist(Beta(2, 2), 8)
+	
+	
+	hw_idx = 2*party + smart .+ 1
+	mac_idx = 2*creative + smart .+ 1
+	project_idx = 2*creative + smart .+ 1
+	success_idx = 2*project + hw .+ 1
+	happy_idx = 4*success + 2*mac + party .+ 1
+	
+	
+	for i = 1:n
+	
+		hw[i] ~ Bernoulli(hw_coeff[hw_idx[i]])
+
+		mac[i] ~ Bernoulli(mac_coeff[mac_idx[i]])
+
+		project[i] ~ Bernoulli(project_coeff[project_idx[i]])
+
+		success[i] ~ Bernoulli(success_coeff[success_idx[i]])
+
+		happy[i] ~ Bernoulli(happy_coeff[happy_idx[i]])
+	end
+	
 	
 	return happy
 end
 
 # ╔═╡ b5ac3cd4-24bc-11eb-1675-c5041020abc5
-df_reduced = df[1:1000, :]
+df_reduced = df[1:50, :]
 
 # ╔═╡ 5fab8164-24bc-11eb-3c1e-55ca18586634
 begin
-	iterations = 200
+	iterations = 100
 	ϵ = 0.05
 	τ = 10
 
@@ -87,11 +101,11 @@ plot(chns1)
 
 # ╔═╡ b875bf6c-2750-11eb-33ac-411faf3424bc
 # What is the probability of being happy given that you are smart and creative, value should be ~0.58132
-prob"happy=[true] | chain = chns1, model = final_model, creative = [true], smart = [true], party = nothing, project = nothing, mac = nothing, hw = nothing, success = nothing"
+prob"happy=[true] | chain = chns1, model = final_model, creative = [true], smart = [true], party = nothing, project = [true], mac = nothing, hw = [true], success = nothing"
 
 # ╔═╡ 7224eda4-24bd-11eb-1b78-9f7767e10ce5
 # this works, and returns a value around 0.38
-prob"happy=[1.0] | chain = chns1, model = final_model, creative=[1.0], smart=[1.0], party=[1.0], project=[1.0], mac=[1.0], hw=[1.0], success=[1.0]"
+prob"happy=[1] | chain = chns1, model = final_model, creative=[1], smart=[1], party=[1], project=[1], mac=[1], hw=[1], success=[1]"
 
 # ╔═╡ 19c1ac62-24e3-11eb-2342-4fbd07281041
 # this works, and returns a value around 0.31
@@ -116,7 +130,7 @@ prob"party=[1.0] | chain = chns1, model = final_model, happy=[1.0], creative=not
 
 # ╔═╡ f9fdf5b6-24c2-11eb-370b-9da79928c34b
 # 1.6
-prob"mac=[1] | chain = chns1, model = final_model, creative=[1], smart=[1], party=nothing, project=nothing, happy=[1], hw=nothing, success=nothing"
+prob"mac=[true] | chain = chns1, model = final_model, creative=[1], smart=[1], party=nothing, project=nothing, happy=nothing, hw=nothing, success=nothing"
 
 # ╔═╡ 9b16a6b0-24c2-11eb-2dd4-11f4189accdd
 chns1[Symbol("mac_coefficients[1]")]
