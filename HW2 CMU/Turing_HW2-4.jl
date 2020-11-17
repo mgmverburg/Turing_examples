@@ -11,7 +11,6 @@ begin
 	using MCMCChains, StatsFuns, StatsPlots, Plots
 	using FillArrays
 	using ReverseDiff
-	using Zygote
 end
 
 # ╔═╡ f531c08a-25b2-11eb-25f9-a10f84850ba7
@@ -32,24 +31,24 @@ end
 hw = Vector{Bool}(undef, 1)
 
 # ╔═╡ cf39605e-2445-11eb-17c2-cd83ae2f8428
-@model function happiness(party, smart, creative, hw, mac, project, success, happy) 
-	if happy === nothing
+@model function happiness(party, smart, creative, hw, mac, project, success, happy, ::Type{T} = Bool) where {T} 
+	if happy === nothing || happy === missing
 		n = 1
-		happy = Vector(undef, n)
+		happy = Vector{T}(undef, n)
 	else
 		n = size(happy)[1]
 	end
-	if hw === nothing
-		hw = Vector(undef, n)
+	if hw === nothing || hw === missing
+		hw = Vector{T}(undef, n)
 	end
-	if mac === nothing
-		mac = Vector(undef, n)
+	if mac === nothing || mac === missing 
+		mac = Vector{T}(undef, n)
 	end
-	if project === nothing
-		project = Vector(undef, n)
+	if project === nothing || project === missing
+		project = Vector{T}(undef, n)
 	end
-	if success === nothing
-		success = Vector(undef, n)
+	if success === nothing || success === missing
+		success = Vector{T}(undef, n)
 	end
 	
 
@@ -67,7 +66,6 @@ hw = Vector{Bool}(undef, 1)
 	success_coeff ~ filldist(Beta(2, 2), 4)
 	happy_coeff ~ filldist(Beta(2, 2), 8)
 	
-
 	for i = 1:n
 		hw_idx = 2*party[i] + smart[i] .+ 1
 		hw[i] ~ Bernoulli(hw_coeff[hw_idx])
@@ -90,7 +88,8 @@ hw = Vector{Bool}(undef, 1)
 end
 
 # ╔═╡ b5ac3cd4-24bc-11eb-1675-c5041020abc5
-df_reduced = df[1:1000, :]
+# potentially reduce the size of the dataset in case runtime is too long. I try to keep the runtime around a few minutes usually.
+df_red = df[1:5000, :]
 
 # ╔═╡ 5fab8164-24bc-11eb-3c1e-55ca18586634
 begin
@@ -99,7 +98,8 @@ begin
 	τ = 10
 
 	# test()()
-	final_model = happiness(df["party"], df["smart"], df["creative"], df["hw"], df["mac"], df["project"], df["success"], df["happy"] )
+	final_model = happiness(df_red["party"], df_red["smart"], df_red["creative"], df_red["hw"], df_red["mac"], df_red["project"], df_red["success"], df_red["happy"] )
+	# final_model = happiness(missing, missing, missing, missing, missing, missing, missing, df_red["happy"] )
 	# chns1 = sample(final_model, HMC(ϵ, τ), iterations)
 	chns1 = sample(final_model, NUTS(0.65), iterations)
 	# chns2 = sample(final_model, SMC(), iterations)
@@ -108,46 +108,111 @@ end
 # ╔═╡ 9c26bdcc-24bc-11eb-1ce9-014839c7dbc5
 plot(chns1)
 
-# ╔═╡ f1816d2e-24e2-11eb-3840-fdc78fb0790f
-# this doesn't work, so we do need brackets
-# prob"happy=1.0 | chain = chns1, model = final_model, creative=1.0, smart=1.0, party=1.0, project=1.0, mac=1.0, hw=1.0, success=1.0"
-
 # ╔═╡ 2a2ab542-24e3-11eb-26a3-d357d783fd16
 # Probability of being happy
 prob"happy=[true] | chain = chns1, model = final_model, creative=nothing, smart=nothing, party=nothing, project=nothing, mac=nothing, hw=nothing, success=nothing"
 
-# ╔═╡ b875bf6c-2750-11eb-33ac-411faf3424bc
-# What is the probability of being happy given that you are smart and creative, value should be ~0.58132
-prob"happy=[true] | chain = chns1, model = final_model, creative = [true], smart = [true], party = nothing, project = [true], mac = nothing, hw = [true], success = nothing"
+# ╔═╡ 0e92dd0e-28ae-11eb-14c6-77e4a23f66e3
+begin
+	creative_d = df_red["creative"]
+	smart_d = df_red["smart"]
+	party_d = df_red["party"]
+	project_d = df_red["project"]
+	mac_d = df_red["mac"]
+	hw_d = df_red["hw"]
+	success_d = df_red["success"]
+	happy_d = fill(true, size(success_d)[1])
+end
 
-# ╔═╡ 7224eda4-24bd-11eb-1b78-9f7767e10ce5
-# this works, and returns a value around 0.38
-prob"happy=[1] | chain = chns1, model = final_model, creative=[1], smart=[1], party=[1], project=[1], mac=[1], hw=[1], success=[1]"
+# ╔═╡ f2f70444-28ad-11eb-2f23-a9765c9cb332
+# Probability of being happy
+result = prob"happy=[true] | chain = chns1, model = final_model, creative=creative_d, smart=smart_d, party=party_d, project=project_d, mac=mac_d, hw=hw_d, success=success_d"
 
-# ╔═╡ 19c1ac62-24e3-11eb-2342-4fbd07281041
-# this works, and returns a value around 0.31
-prob"happy=[1.0] | chain = chns1, model = final_model, creative=[1.0], smart=[1.0], party=[1.0], project=[1.0], mac=[1.0], hw=[1.0], success=nothing"
+# ╔═╡ c640ec20-28b8-11eb-018d-2388c1fe3bba
+# P(happy = T) = 0.51575
+# Our found answer: 0.5164463373803578
+begin
+	target_happy = [true]
+	local counter = 1
+	result_prob = Vector{Float64}(undef, 128)
+	options = [[true], [false]]
+	for creative_v = options
+		for smart_v = options
+			for party_v = options
+				for project_v = options
+					for mac_v = options
+						for hw_v = options
+							for success_v = options
+								result = prob"happy=target_happy, creative=creative_v, smart=smart_v, party=party_v, project=project_v, mac=mac_v, hw=hw_v, success=success_v | chain = chns1, model = final_model"
+								result_prob[counter] = mean(result)
+								counter += 1
+								
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	
+	# prob"happy=target_happy, creative=[true], smart=[true], party=[true], project=[true], mac=[true], hw=[true], success=[true] | chain = chns1, model = final_model"
+end
 
-# ╔═╡ ccb0700e-24c0-11eb-030e-0d1f6b4b287b
-prob"mac=[1.0] | chain = chns1, model = final_model, creative=nothing, smart=nothing, party=nothing, project=nothing, happy=nothing, hw=nothing, success=nothing"
+# ╔═╡ 9560f272-28bc-11eb-0265-1fab4e4cc6b7
+# this gives the answer we are looking for for P(happy=T)
+sum(result_prob)
 
-# ╔═╡ 844dcf30-24c2-11eb-2e2d-d3220534f2a3
-prob"project=[true] | chain = chns1, model = final_model, creative=[0.0], smart=[0.0], party=[0.0], mac=[0.0], happy=[1.0], hw=[0.0], success=[0.0]"
+# ╔═╡ e205645e-28c2-11eb-373a-f1c104c3a119
+begin
+	local target_happy = [true]
+	local party_v = [false]
+	local hw_v = [true]
+	local project_v = [true]
+	local counter = 1
+	result_prob_B_A = Vector{Float64}(undef, 16)
+	local options = [[true], [false]]
+	for creative_v = options
+		for smart_v = options
+			for mac_v = options
+				for success_v = options
+					result = prob"happy=target_happy, creative=creative_v, smart=smart_v, party=party_v, project=project_v, mac=mac_v, hw=hw_v, success=success_v | chain = chns1, model = final_model"
+					result_prob_B_A[counter] = mean(result)
+					counter += 1
+								
+				end
+			end
+		end
+	end
+end
 
-# ╔═╡ 15cdb308-25a4-11eb-3592-3d363066ded7
-prob"happy=[1.0] | chain = chns1, model = final_model, creative=[0.0], smart=[1.0], party=[1.0], project=nothing, mac=nothing, hw=nothing, success=nothing"
+# ╔═╡ 861a3ace-28c3-11eb-3147-99a358cde6ce
+begin
+	local party_v = [false]
+	local hw_v = [true]
+	local project_v = [true]
+	local counter = 1
+	result_prob_B = Vector{Float64}(undef, 32)
+	local options = [[true], [false]]
+	for creative_v = options
+		for smart_v = options
+			for mac_v = options
+				for success_v = options
+					for happy_v = options
+						result = prob"happy=happy_v, creative=creative_v, smart=smart_v, party=party_v, project=project_v, mac=mac_v, hw=hw_v, success=success_v | chain = chns1, model = final_model"
+						result_prob_B[counter] = mean(result)
+						counter += 1
+					end
+				end
+			end
+		end
+	end
+end
 
-# ╔═╡ 86e8b916-25ae-11eb-113f-5b27b75b67c6
-# 1.5
-# This correctly gives the probability of P(party=T)~=0.60216 
-prob"party=[1.0] | chain = chns1, model = final_model, happy=[1.0], creative=nothing, smart=nothing, project=nothing, mac=nothing, hw=nothing, success=nothing"
-
-# ╔═╡ f9fdf5b6-24c2-11eb-370b-9da79928c34b
-# 1.6
-prob"mac=[true] | chain = chns1, model = final_model, creative=[1], smart=[1], party=nothing, project=nothing, happy=nothing, hw=nothing, success=nothing"
-
-# ╔═╡ 9b16a6b0-24c2-11eb-2dd4-11f4189accdd
-chns1[Symbol("mac_coefficients[1]")]
+# ╔═╡ 19b25f4c-28c3-11eb-2f45-4bdf52717421
+# P(happy = T | party = F, hw = T, project = T) = 0.32108
+# which is very close to our result of 0.32106783203508416
+sum(result_prob_B_A)/sum(result_prob_B)
+# this works because of bayes' rule P(A|B)=P(B,A)/P(B).
 
 # ╔═╡ Cell order:
 # ╠═ac900954-2445-11eb-238e-ffc1eae45120
@@ -158,14 +223,11 @@ chns1[Symbol("mac_coefficients[1]")]
 # ╠═b5ac3cd4-24bc-11eb-1675-c5041020abc5
 # ╠═5fab8164-24bc-11eb-3c1e-55ca18586634
 # ╠═9c26bdcc-24bc-11eb-1ce9-014839c7dbc5
-# ╠═f1816d2e-24e2-11eb-3840-fdc78fb0790f
 # ╠═2a2ab542-24e3-11eb-26a3-d357d783fd16
-# ╠═b875bf6c-2750-11eb-33ac-411faf3424bc
-# ╠═7224eda4-24bd-11eb-1b78-9f7767e10ce5
-# ╠═19c1ac62-24e3-11eb-2342-4fbd07281041
-# ╠═ccb0700e-24c0-11eb-030e-0d1f6b4b287b
-# ╠═844dcf30-24c2-11eb-2e2d-d3220534f2a3
-# ╠═15cdb308-25a4-11eb-3592-3d363066ded7
-# ╠═86e8b916-25ae-11eb-113f-5b27b75b67c6
-# ╠═f9fdf5b6-24c2-11eb-370b-9da79928c34b
-# ╠═9b16a6b0-24c2-11eb-2dd4-11f4189accdd
+# ╠═0e92dd0e-28ae-11eb-14c6-77e4a23f66e3
+# ╠═f2f70444-28ad-11eb-2f23-a9765c9cb332
+# ╠═c640ec20-28b8-11eb-018d-2388c1fe3bba
+# ╠═9560f272-28bc-11eb-0265-1fab4e4cc6b7
+# ╠═e205645e-28c2-11eb-373a-f1c104c3a119
+# ╠═861a3ace-28c3-11eb-3147-99a358cde6ce
+# ╠═19b25f4c-28c3-11eb-2f45-4bdf52717421
