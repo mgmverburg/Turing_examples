@@ -11,7 +11,12 @@ begin
 	using MCMCChains, StatsFuns, StatsPlots, Plots
 	using FillArrays
 	using ReverseDiff
+	using Logging: global_logger
+	using TerminalLoggers: TerminalLogger
 end
+
+# ╔═╡ 6f80f0f8-2974-11eb-17f3-533d1e8cce49
+global_logger(TerminalLogger())
 
 # ╔═╡ f531c08a-25b2-11eb-25f9-a10f84850ba7
 # Turing.setadbackend(:forwarddiff)
@@ -216,6 +221,7 @@ sum(result_prob_B_A)/sum(result_prob_B)
 
 # ╔═╡ Cell order:
 # ╠═ac900954-2445-11eb-238e-ffc1eae45120
+# ╠═6f80f0f8-2974-11eb-17f3-533d1e8cce49
 # ╠═f531c08a-25b2-11eb-25f9-a10f84850ba7
 # ╠═c2b7bccc-2445-11eb-2dc8-37cd864a32b4
 # ╠═2ad98110-2837-11eb-308e-d37f265fbcb3
