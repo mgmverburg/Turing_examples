@@ -31,7 +31,7 @@ begin
 end
 
 # ╔═╡ bda140aa-29a9-11eb-35cc-cbbeb3398926
-result1 = prob"y = [1.5] | chain=c2, model = model_gdemo, x = [1.0], s = 1.3936"
+result1 = prob"y = [1.5] | chain=c2, model = model_gdemo, x = [1.0]"
 
 # ╔═╡ c07b08ce-29a9-11eb-236f-050c9c7d8d56
 mean(result1)
