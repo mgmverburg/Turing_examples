@@ -237,6 +237,7 @@ function _lkj_cholesky_onion_tri!(
     β = η + (d - 2)//2
     #  1. Initialization
     w0 = 2 * rand(rng, Beta(β, β)) - 1
+    w0 = min(typeof(w0)(1.0 - 1e-3), w0)
     @inbounds if TTri <: LowerTriangular
         A[2, 1] = w0
     else
@@ -249,6 +250,8 @@ function _lkj_cholesky_onion_tri!(
         β -= 1//2
         #  (b)
         y = rand(rng, Beta(k//2, β))
+        
+        y = max(typeof(y)(1e-3), min(typeof(y)(1.0 - 1e-3), y))
         #  (c)-(e)
         # w is directionally uniform vector of length √y
         @inbounds w = @views TTri <: LowerTriangular ? A[k + 1, 1:k] : A[1:k, k + 1]
@@ -277,21 +280,28 @@ end
 
 struct LKJCholBijector <: Bijector{2} end
 
-function (b::LKJCholBijector)(x::Cholesky)    
-    w = x.U
-    # w = cholesky(x).U  # keep LowerTriangular until here can avoid some computation
-    r =  LinearAlgebra.Cholesky(Array(_link_chol_lkj_2(w)')+ zero(x.factors), 'L', 0)
-    return r # + zero(x.factors)
-    # This dense format itself is required by a test, though I can't get the point.
-    # https://github.com/TuringLang/Bijectors.jl/blob/b0aaa98f90958a167a0b86c8e8eca9b95502c42d/test/transform.jl#L67
-end
+
+
+(b::LKJCholBijector)(X::Cholesky) = link_lkj_chol(X)
+
+
+# function (b::LKJCholBijector)(x::Cholesky)    
+#     w = x.U
+#     # w = cholesky(x).U  # keep LowerTriangular until here can avoid some computation
+#     r =  LinearAlgebra.Cholesky(Array(_link_chol_lkj_2(w)')+ zero(x.factors), 'L', 0)
+#     return r # + zero(x.factors)
+#     # This dense format itself is required by a test, though I can't get the point.
+#     # https://github.com/TuringLang/Bijectors.jl/blob/b0aaa98f90958a167a0b86c8e8eca9b95502c42d/test/transform.jl#L67
+# end
 
 (b::LKJCholBijector)(X::AbstractArray{<:Cholesky}) = map(b, X)
 
-function (ib::Inverse{<:LKJCholBijector})(y::Cholesky)
-    w = Bijectors._inv_link_chol_lkj(y.U)
-    return LinearAlgebra.Cholesky(Array(w'), 'L', 0)
-end
+(ib::Inverse{<:LKJCholBijector})(y::Cholesky) = inv_link_lkj_chol(y)
+
+# function (ib::Inverse{<:LKJCholBijector})(y::Cholesky)
+#     w = Bijectors._inv_link_chol_lkj(y.U)
+#     return LinearAlgebra.Cholesky(Array(w'), 'L', 0)
+# end
 (ib::Inverse{<:LKJCholBijector})(Y::AbstractArray{<:Cholesky}) = map(ib, Y)
 
 
@@ -316,15 +326,43 @@ function Bijectors.logabsdetjac(b::LKJCholBijector, X::Cholesky)
     return -logabsdetjac(inv(b), (b(X))) 
 end
 function Bijectors.logabsdetjac(b::LKJCholBijector, X::AbstractArray{<:Cholesky})
-    return mapvcat(X) do x
+    return Bijectors.mapvcat(X) do x
         logabsdetjac(b, x)
     end
 end
 
+function _inv_link_w_lkj_chol(y)
+    K = LinearAlgebra.checksquare(y)
+
+    w = similar(y)
+    
+    @inbounds for j in 1:K
+        w[1, j] = 1
+        for i in 2:j
+            z = tanh(y[i-1, j])
+            # I really thought tanh would be more stable, but apparently even that can somehow become
+            # larger than 1.0? Because without doing below fix, I was still getting the same consistent DomainError
+            z = min(typeof(z)(1.0 - 1e-3), z)
+            tmp = w[i-1, j]
+            w[i-1, j] = z * tmp
+            w[i, j] = tmp * sqrt(1 - z^2)
+        end
+        for i in (j+1):K
+            w[i, j] = 0
+        end
+    end
+    
+    return w
+end
 
 
+function inv_link_lkj_chol(y)
+    w = _inv_link_w_lkj_chol(Array(y.U))
+    return LinearAlgebra.Cholesky(Array(w'), 'L', 0)
+end
 
-function _link_chol_lkj_2(w)
+
+function _link_w_lkj_chol(w)
     K = LinearAlgebra.checksquare(w)
 
     z = similar(w) # z is also UpperTriangular. 
@@ -333,13 +371,15 @@ function _link_chol_lkj_2(w)
     # This block can't be integrated with loop below, because w[1,1] != 0.
     @inbounds z[1, 1] = 0
 
+    # this is a wild guess, but I keep getting errors only happening in the AD part, which I can't directly trace back
+    # to the code. So maybe it is because I used regular integers instead of whatever type it should be?
     @inbounds for j=2:K
-        tmp_w = min(1.0 - 1e-3, w[1, j])
+        tmp_w = min(typeof(w[1,j])(1.0 - 1e-3), w[1, j])
         z[1, j] = atanh(tmp_w)
         tmp = sqrt(1 - tmp_w^2)
         for i in 2:(j - 1)
             p = w[i, j] / tmp
-            p = min(1.0 - 1e-3, p)
+            p = min(typeof(p)(1.0 - 1e-3), p)
 
             tmp *= sqrt(1 - p^2)
             z[i, j] = atanh(p)
@@ -350,6 +390,14 @@ function _link_chol_lkj_2(w)
     
     return z
 end
+
+function link_lkj_chol(x)
+    w = x.U + zero(x.factors)
+    # w = cholesky(x).U  # keep LowerTriangular until here can avoid some computation
+    r =  LinearAlgebra.Cholesky(Array(_link_w_lkj_chol(w)'), 'L', 0)
+    return r # + zero(x.factors)
+end
+
 
 Bijectors.bijector(d::LKJCholesky) = LKJCholBijector()
 
