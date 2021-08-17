@@ -173,6 +173,7 @@ function Distributions.loglikelihood(d::LKJCholesky, Rs::AbstractArray{<:Cholesk
     return sum(R -> Distributions.logpdf(d, R), Rs)
 end
 
+
 #  -----------------------------------------------------------------------------
 #  Sampling
 #  -----------------------------------------------------------------------------
@@ -191,7 +192,6 @@ function Distributions.rand(rng::AbstractRNG, d::LKJCholesky, dims::Dims)
     Rs = Array{Cholesky{T,TM}}(undef, dims)
     for i in eachindex(Rs)
         factors = TM(undef, p, p)
-        # factors = zeros(T, p, p)
         Rs[i] = R = Cholesky(factors, uplo, 0)
         _lkj_cholesky_onion_sampler!(rng, d, R)
     end
@@ -207,7 +207,6 @@ function Distributions.rand!(rng::AbstractRNG, d::LKJCholesky, Rs::AbstractArray
     if allocate
         for i in eachindex(Rs)
             Rs[i] = _lkj_cholesky_onion_sampler!(rng, d, Cholesky(TM(undef, p, p), uplo, 0))
-            # Rs[i] = _lkj_cholesky_onion_sampler!(rng, d, Cholesky(TM(zeros(eltype(TM), p, p)), uplo, 0))
         end
     else
         for i in eachindex(Rs)
@@ -275,11 +274,11 @@ end
 
 ### ---------------- DynamicPPL stuff -----------------------------
 
-DynamicPPL.vectorize(d::LKJCholesky, r::Cholesky) =  copy(vec( r.factors' ))
+DynamicPPL.vectorize(d::LKJCholesky, r::Cholesky) =  copy(vec( r.factors ))
 
 
 function DynamicPPL.reconstruct(d::LKJCholesky, val::AbstractVector)
-    return  LinearAlgebra.Cholesky(Array(reshape(copy(val), size(d))'), 'L', 0)
+    return  LinearAlgebra.Cholesky(reshape(copy(val), size(d)), 'L', 0)
 end
 
 
@@ -288,11 +287,15 @@ end
 
 struct LKJCholBijector <: Bijector{2} end
 
-(b::LKJCholBijector)(x::Cholesky) = link_lkj_chol(x)
+function (b::LKJCholBijector)(x::Cholesky)
+    return LinearAlgebra.Cholesky(Array(_link_w_lkj_chol(x.U.data)') + zero(x.U.data), 'L', 0)
+end
    
 (b::LKJCholBijector)(X::AbstractArray{<:Cholesky}) = map(b, X)
 
-(ib::Inverse{<:LKJCholBijector})(y::Cholesky) = inv_link_lkj_chol(y)
+function (ib::Inverse{<:LKJCholBijector})(y::Cholesky) 
+    return LinearAlgebra.Cholesky(Array(_inv_link_w_lkj_chol(y.U.data)'), 'L', 0)
+end
 
 (ib::Inverse{<:LKJCholBijector})(Y::AbstractArray{<:Cholesky}) = map(ib, Y)
 
@@ -327,7 +330,6 @@ end
 
 
 function _inv_link_w_lkj_chol(y)
-    # @debug ("------------------- _inv_link_w_lkj_chol --------------------------")
     K = LinearAlgebra.checksquare(y)
     w = zero(y)
     
@@ -348,20 +350,11 @@ function _inv_link_w_lkj_chol(y)
     return w
 end
 
-function inv_link_lkj_chol(y)
-    w = _inv_link_w_lkj_chol(y.U.data)
-
-    return LinearAlgebra.Cholesky(Array(w'), 'L', 0)
-end
-
-
 
 function _link_w_lkj_chol(w)
-    # @debug ("------------------- _link_w_lkj_chol --------------------------")
     K = LinearAlgebra.checksquare(w)
 
-    # similar would be more efficient, but sometimes we get undef's, of which we subsequently cannot do a transpose.
-    z = zero(w) # z is also UpperTriangular. 
+    z = similar(w) # z is also UpperTriangular. 
     # Some zero filling can be avoided. Though diagnoal is still needed to be filled with zero.
 
     # This block can't be integrated with loop below, because w[1,1] != 0.
@@ -383,10 +376,6 @@ function _link_w_lkj_chol(w)
     return z
 end
 
-
-function link_lkj_chol(x)
-    return LinearAlgebra.Cholesky(Array(_link_w_lkj_chol(x.U.data)') + zero(x.U.data), 'L', 0)
-end
 
 
 
@@ -413,14 +402,10 @@ ReverseDiff.@grad function _inv_link_w_lkj_chol(y_tracked::AbstractArray)
     y = ReverseDiff.value(y_tracked)
     
     K = LinearAlgebra.checksquare(y)
-    # w = similar(y)
-    w = zero(y)
+    w = similar(y)
 
-    # z_mat = similar(y) # cache for adjoint
-    # tmp_mat = similar(y)
-
-    z_mat = zero(y) # cache for adjoint
-    tmp_mat = zero(y)
+    z_mat = similar(y) # cache for adjoint
+    tmp_mat = similar(y)
     
     @inbounds for j in 1:K
         w[1, j] = 1
@@ -465,13 +450,11 @@ ReverseDiff.@grad function _link_w_lkj_chol(w_tracked::AbstractArray)
     w = ReverseDiff.value(w_tracked)
     K = LinearAlgebra.checksquare(w)
     
-    # z = similar(w)
-    z = zero(w)
+    z = similar(w)
 
     @inbounds z[1, 1] = 0
 
-    # tmp_mat = similar(w) # cache for pullback.
-    tmp_mat = zero(w) # cache for pullback.
+    tmp_mat = similar(w) # cache for pullback.
 
     @inbounds for j=2:K
         tmp_w = max(typeof(w[1, j])(-onemin), min(typeof(w[1, j])(onemin), w[1, j]))
@@ -492,8 +475,7 @@ ReverseDiff.@grad function _link_w_lkj_chol(w_tracked::AbstractArray)
     function pullback_link_chol_lkj(Δz)
         LinearAlgebra.checksquare(Δz)
 
-        # Δw = similar(w)
-        Δw = zero(w)
+        Δw = similar(w)
 
         @inbounds Δw[1,1] = zero(eltype(Δz))
 
