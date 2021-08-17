@@ -7,6 +7,12 @@ using LinearAlgebra
 using Random
 
 
+# value that we subtract from 1, such that we don't deal with numerical instabilities
+const smallval = 1e-8
+# easy reusable value for 1 min the small value above, because we use it a lot.
+const onemin = 1.0 - smallval
+const oneminsq = onemin^2
+
 # This code is by no means solely my own, it is just for personal use because I had problems with Cholesky stuff, similar to what was mentioned here: https://discourse.julialang.org/t/multi-level-varying-slopes-with-two-clusters-cross-classification/62036
 # and in other places as well. Hence I quickly copied snippets from here and there, such as the main distribution code which comes from the PR by Seth Axen: https://github.com/JuliaStats/Distributions.jl/pull/1339
 # and a lot of the bijectors stuff is also copied from the CorrBijector from Bijectors.jl
@@ -114,12 +120,14 @@ function Distributions.insupport(d::LKJCholesky, R::Cholesky)
     @inbounds if R.uplo === 'U'
         for (j, jind) in enumerate(jinds)
             col_iinds = view(iinds, 1:j)
-            sum(abs2(factors[iind, jind]) for iind in col_iinds) ≈ 1 || return false
+            # perhaps the tolerance should even be sqrt(smallval^2 + 2*smallval) in case I get errors still
+            # but ingeral sqrt(smallval) seems good, because it should relate to the value we use in all the statements where we take the minimum between 1-tol and the actual value
+            isapprox(sum(abs2(factors[iind, jind]) for iind in col_iinds), 1; rtol=sqrt(smallval)) || return false
         end
     else  # R.uplo === 'L'
         for (i, iind) in enumerate(iinds)
             row_jinds = view(jinds, 1:i)
-            sum(abs2(factors[iind, jind]) for jind in row_jinds) ≈ 1 || return false
+            isapprox(sum(abs2(factors[iind, jind]) for jind in row_jinds), 1; rtol=sqrt(smallval)) || return false
         end
     end
     return true
@@ -150,7 +158,7 @@ function Distributions.logkernel(d::LKJCholesky, R::Cholesky)
 end
 
 function Distributions.logpdf(d::LKJCholesky, R::Cholesky)
-    if !Distributions.insupport(d, R) 
+    if !Distributions.insupport(d, R)
         throw(ArgumentError("Provided point is not in the support."))
     end
     return Distributions._logpdf(d, R)
@@ -171,6 +179,7 @@ end
 
 function Distributions.rand(rng::AbstractRNG, d::LKJCholesky)
     factors = Matrix{eltype(d)}(undef, size(d))
+    # factors = zeros(eltype(d), size(d))
     R = Cholesky(factors, d.uplo, 0)
     return _lkj_cholesky_onion_sampler!(rng, d, R)
 end
@@ -182,6 +191,7 @@ function Distributions.rand(rng::AbstractRNG, d::LKJCholesky, dims::Dims)
     Rs = Array{Cholesky{T,TM}}(undef, dims)
     for i in eachindex(Rs)
         factors = TM(undef, p, p)
+        # factors = zeros(T, p, p)
         Rs[i] = R = Cholesky(factors, uplo, 0)
         _lkj_cholesky_onion_sampler!(rng, d, R)
     end
@@ -197,6 +207,7 @@ function Distributions.rand!(rng::AbstractRNG, d::LKJCholesky, Rs::AbstractArray
     if allocate
         for i in eachindex(Rs)
             Rs[i] = _lkj_cholesky_onion_sampler!(rng, d, Cholesky(TM(undef, p, p), uplo, 0))
+            # Rs[i] = _lkj_cholesky_onion_sampler!(rng, d, Cholesky(TM(zeros(eltype(TM), p, p)), uplo, 0))
         end
     else
         for i in eachindex(Rs)
@@ -237,7 +248,6 @@ function _lkj_cholesky_onion_tri!(
     β = η + (d - 2)//2
     #  1. Initialization
     w0 = 2 * rand(rng, Beta(β, β)) - 1
-    w0 = min(typeof(w0)(1.0 - 1e-3), w0)
     @inbounds if TTri <: LowerTriangular
         A[2, 1] = w0
     else
@@ -250,8 +260,6 @@ function _lkj_cholesky_onion_tri!(
         β -= 1//2
         #  (b)
         y = rand(rng, Beta(k//2, β))
-        
-        y = max(typeof(y)(1e-3), min(typeof(y)(1.0 - 1e-3), y))
         #  (c)-(e)
         # w is directionally uniform vector of length √y
         @inbounds w = @views TTri <: LowerTriangular ? A[k + 1, 1:k] : A[1:k, k + 1]
@@ -280,28 +288,12 @@ end
 
 struct LKJCholBijector <: Bijector{2} end
 
-
-
-(b::LKJCholBijector)(X::Cholesky) = link_lkj_chol(X)
-
-
-# function (b::LKJCholBijector)(x::Cholesky)    
-#     w = x.U
-#     # w = cholesky(x).U  # keep LowerTriangular until here can avoid some computation
-#     r =  LinearAlgebra.Cholesky(Array(_link_chol_lkj_2(w)')+ zero(x.factors), 'L', 0)
-#     return r # + zero(x.factors)
-#     # This dense format itself is required by a test, though I can't get the point.
-#     # https://github.com/TuringLang/Bijectors.jl/blob/b0aaa98f90958a167a0b86c8e8eca9b95502c42d/test/transform.jl#L67
-# end
-
+(b::LKJCholBijector)(x::Cholesky) = link_lkj_chol(x)
+   
 (b::LKJCholBijector)(X::AbstractArray{<:Cholesky}) = map(b, X)
 
 (ib::Inverse{<:LKJCholBijector})(y::Cholesky) = inv_link_lkj_chol(y)
 
-# function (ib::Inverse{<:LKJCholBijector})(y::Cholesky)
-#     w = Bijectors._inv_link_chol_lkj(y.U)
-#     return LinearAlgebra.Cholesky(Array(w'), 'L', 0)
-# end
 (ib::Inverse{<:LKJCholBijector})(Y::AbstractArray{<:Cholesky}) = map(ib, Y)
 
 
@@ -323,80 +315,80 @@ function Bijectors.logabsdetjac(b::LKJCholBijector, X::Cholesky)
     `logabsdetjac(::Inverse{CorrBijector}, y::AbstractMatrix{<:Real})`
     if possible.
     =#
-    return -logabsdetjac(inv(b), (b(X))) 
+    return -Bijectors.logabsdetjac(inv(b), (b(X))) 
 end
 function Bijectors.logabsdetjac(b::LKJCholBijector, X::AbstractArray{<:Cholesky})
     return Bijectors.mapvcat(X) do x
-        logabsdetjac(b, x)
+        Bijectors.logabsdetjac(b, x)
     end
 end
 
-function _inv_link_w_lkj_chol(y)
-    K = LinearAlgebra.checksquare(y)
 
-    w = similar(y)
+
+
+function _inv_link_w_lkj_chol(y)
+    # @debug ("------------------- _inv_link_w_lkj_chol --------------------------")
+    K = LinearAlgebra.checksquare(y)
+    w = zero(y)
     
     @inbounds for j in 1:K
         w[1, j] = 1
         for i in 2:j
             z = tanh(y[i-1, j])
-            # I really thought tanh would be more stable, but apparently even that can somehow become
-            # larger than 1.0? Because without doing below fix, I was still getting the same consistent DomainError
-            z = min(typeof(z)(1.0 - 1e-3), z)
             tmp = w[i-1, j]
+
             w[i-1, j] = z * tmp
-            w[i, j] = tmp * sqrt(1 - z^2)
+
+            w[i, j] = tmp * sqrt(1 - min(typeof(z)(oneminsq), z^2))
         end
         for i in (j+1):K
             w[i, j] = 0
         end
     end
-    
     return w
 end
 
-
 function inv_link_lkj_chol(y)
-    w = _inv_link_w_lkj_chol(Array(y.U))
+    w = _inv_link_w_lkj_chol(y.U.data)
+
     return LinearAlgebra.Cholesky(Array(w'), 'L', 0)
 end
 
 
+
 function _link_w_lkj_chol(w)
+    # @debug ("------------------- _link_w_lkj_chol --------------------------")
     K = LinearAlgebra.checksquare(w)
 
-    z = similar(w) # z is also UpperTriangular. 
+    # similar would be more efficient, but sometimes we get undef's, of which we subsequently cannot do a transpose.
+    z = zero(w) # z is also UpperTriangular. 
     # Some zero filling can be avoided. Though diagnoal is still needed to be filled with zero.
 
     # This block can't be integrated with loop below, because w[1,1] != 0.
     @inbounds z[1, 1] = 0
 
-    # this is a wild guess, but I keep getting errors only happening in the AD part, which I can't directly trace back
-    # to the code. So maybe it is because I used regular integers instead of whatever type it should be?
     @inbounds for j=2:K
-        tmp_w = min(typeof(w[1,j])(1.0 - 1e-3), w[1, j])
+        tmp_w = max(typeof(w[1,j])(-onemin), min(typeof(w[1,j])(onemin), w[1, j]))
         z[1, j] = atanh(tmp_w)
         tmp = sqrt(1 - tmp_w^2)
         for i in 2:(j - 1)
             p = w[i, j] / tmp
-            p = min(typeof(p)(1.0 - 1e-3), p)
+            p = max(typeof(p)(-onemin), min(typeof(p)(onemin), p))
 
             tmp *= sqrt(1 - p^2)
             z[i, j] = atanh(p)
-
         end
         z[j, j] = 0
     end
-    
     return z
 end
 
+
 function link_lkj_chol(x)
-    w = x.U + zero(x.factors)
-    # w = cholesky(x).U  # keep LowerTriangular until here can avoid some computation
-    r =  LinearAlgebra.Cholesky(Array(_link_w_lkj_chol(w)'), 'L', 0)
-    return r # + zero(x.factors)
+    return LinearAlgebra.Cholesky(Array(_link_w_lkj_chol(x.U.data)') + zero(x.U.data), 'L', 0)
 end
+
+
 
 
 Bijectors.bijector(d::LKJCholesky) = LKJCholBijector()
@@ -408,3 +400,124 @@ Bijectors.bijector(d::LKJCholesky) = LKJCholBijector()
 # Base.length(::Cholesky) = 1
 
 Turing.Utilities.FlattenIterator(name, value::Cholesky) = Turing.Utilities.FlattenIterator(Symbol(name), Array(value.L))
+
+
+
+	
+using ReverseDiff
+
+
+_inv_link_w_lkj_chol(y::AbstractArray{<:ReverseDiff.TrackedReal}) = ReverseDiff.track(_inv_link_w_lkj_chol, y)
+
+ReverseDiff.@grad function _inv_link_w_lkj_chol(y_tracked::AbstractArray)
+    y = ReverseDiff.value(y_tracked)
+    
+    K = LinearAlgebra.checksquare(y)
+    # w = similar(y)
+    w = zero(y)
+
+    # z_mat = similar(y) # cache for adjoint
+    # tmp_mat = similar(y)
+
+    z_mat = zero(y) # cache for adjoint
+    tmp_mat = zero(y)
+    
+    @inbounds for j in 1:K
+        w[1, j] = 1
+        for i in 2:j
+            z = tanh(y[i-1, j])
+            tmp = w[i-1, j]
+            w[i-1, j] = z * tmp
+
+            z_mat[i, j] = z
+            tmp_mat[i, j] = tmp
+            
+            w[i, j] = tmp * sqrt(1 - min(typeof(z)(oneminsq), z^2))
+        end
+        for i in (j+1):K
+            w[i, j] = 0
+        end
+    end
+
+    function pullback_inv_link_chol_lkj(Δw)
+        LinearAlgebra.checksquare(Δw)
+
+        Δy = zero(y)
+
+        @inbounds for j in 1:K
+            Δtmp = Δw[j,j]
+            for i in j:-1:2
+                z_mat_min_sq = min(typeof(z_mat[i, j])(oneminsq), z_mat[i, j]^2)
+                Δz = Δw[i-1, j] * tmp_mat[i, j] - Δtmp * tmp_mat[i, j] / sqrt(1 - z_mat_min_sq) * z_mat[i, j]
+                Δy[i-1, j] = Δz / cosh(y[i-1, j])^2
+                Δtmp = Δw[i-1, j] * z_mat[i, j] + Δtmp * sqrt(1 - z_mat_min_sq)
+            end
+        end
+        
+        return (Δy,)
+    end
+
+    return w, pullback_inv_link_chol_lkj
+end
+
+_link_w_lkj_chol(w::AbstractArray{<:ReverseDiff.TrackedReal}) = ReverseDiff.track(_link_w_lkj_chol, w)
+ReverseDiff.@grad function _link_w_lkj_chol(w_tracked::AbstractArray)
+    w = ReverseDiff.value(w_tracked)
+    K = LinearAlgebra.checksquare(w)
+    
+    # z = similar(w)
+    z = zero(w)
+
+    @inbounds z[1, 1] = 0
+
+    # tmp_mat = similar(w) # cache for pullback.
+    tmp_mat = zero(w) # cache for pullback.
+
+    @inbounds for j=2:K
+        tmp_w = max(typeof(w[1, j])(-onemin), min(typeof(w[1, j])(onemin), w[1, j]))
+        z[1, j] = atanh(tmp_w)
+        tmp = sqrt(1 - tmp_w^2)
+        tmp_mat[1, j] = tmp
+        for i in 2:(j - 1)
+            p = w[i, j] / tmp
+            p = max(typeof(p)(-onemin), min(typeof(p)(onemin), p))
+
+            tmp *= sqrt(1 - p^2)
+            tmp_mat[i, j] = tmp
+            z[i, j] = atanh(p)
+        end
+        z[j, j] = 0
+    end
+
+    function pullback_link_chol_lkj(Δz)
+        LinearAlgebra.checksquare(Δz)
+
+        # Δw = similar(w)
+        Δw = zero(w)
+
+        @inbounds Δw[1,1] = zero(eltype(Δz))
+
+        @inbounds for j=2:K
+            Δw[j, j] = 0
+            Δtmp = zero(eltype(Δz)) # Δtmp_mat[j-1,j]
+            for i in (j-1):-1:2
+                p = w[i, j] / tmp_mat[i-1, j]
+                pmin = max(typeof(p)(-onemin), min(typeof(p)(onemin), p))
+
+
+                ftmp = sqrt(1 - pmin^2)
+                d_ftmp_p = -p / ftmp
+                d_p_tmp = -w[i,j] / tmp_mat[i-1, j]^2
+
+                Δp = Δz[i,j] / (1-p^2) + Δtmp * tmp_mat[i-1, j] * d_ftmp_p
+                Δw[i, j] = Δp / tmp_mat[i-1, j]
+                Δtmp = Δp * d_p_tmp + Δtmp * ftmp # update to "previous" Δtmp
+            end
+            Δw[1, j] = Δz[1, j] / (1-w[1,j]^2) - Δtmp / sqrt(1 - min(typeof(w[1, j])(oneminsq), w[1, j]^2)) * w[1,j]
+        end
+
+        return (Δw,)
+    end
+
+    return z, pullback_link_chol_lkj
+end
