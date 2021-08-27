@@ -8,7 +8,7 @@ using Random
 
 
 # value that we subtract from 1, such that we don't deal with numerical instabilities
-const smallval = 1e-8
+const smallval = 0.0
 # easy reusable value for 1 min the small value above, because we use it a lot.
 const onemin = 1.0 - smallval
 const oneminsq = onemin^2
@@ -122,12 +122,14 @@ function Distributions.insupport(d::LKJCholesky, R::Cholesky)
             col_iinds = view(iinds, 1:j)
             # perhaps the tolerance should even be sqrt(smallval^2 + 2*smallval) in case I get errors still
             # but ingeral sqrt(smallval) seems good, because it should relate to the value we use in all the statements where we take the minimum between 1-tol and the actual value
-            isapprox(sum(abs2(factors[iind, jind]) for iind in col_iinds), 1; rtol=sqrt(smallval)) || return false
+            sum(abs2(factors[iind, jind]) for iind in col_iinds) ≈ 1 || return false
+            # isapprox(sum(abs2(factors[iind, jind]) for iind in col_iinds), 1; rtol=sqrt(smallval)) || return false
         end
     else  # R.uplo === 'L'
         for (i, iind) in enumerate(iinds)
             row_jinds = view(jinds, 1:i)
-            isapprox(sum(abs2(factors[iind, jind]) for jind in row_jinds), 1; rtol=sqrt(smallval)) || return false
+            sum(abs2(factors[iind, jind]) for jind in row_jinds) ≈ 1 || return false
+            # isapprox(sum(abs2(factors[iind, jind]) for jind in row_jinds), 1; rtol=sqrt(smallval)) || return false
         end
     end
     return true
